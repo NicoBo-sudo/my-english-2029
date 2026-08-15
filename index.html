@@ -208,7 +208,11 @@ const State = {
   revealed:0,
   chosen:{},
   readDone:{},           // { '2026-08-15': [0,1,2] } 今天勾了哪几句跟读
-  completedDates:[]      // 标记为"今日完成"的日期，用来算连续打卡
+  completedDates:[],     // 标记为"今日完成"的日期，用来算连续打卡
+  vocabBank:{},          // 累积词库 { word: {word,zh,example,stress_zh,status,reviewCount,firstSeen} }
+  reviewQueue:[],
+  reviewIndex:0,
+  reviewFlipped:false
 };
 
 function todayKey(){
@@ -283,6 +287,51 @@ function resetProgress(){
   saveProgress(); render();
 }
 
+/* ---------------- 复习词库 ---------------- */
+function loadVocabBank(){
+  try{ const raw = localStorage.getItem('myenglish-vocab-bank'); return raw ? JSON.parse(raw) : {}; }
+  catch(e){ return {}; }
+}
+function saveVocabBank(){
+  try{ localStorage.setItem('myenglish-vocab-bank', JSON.stringify(State.vocabBank)); }catch(e){}
+}
+function mergeVocabIntoBank(vocabList, dateKey){
+  (vocabList||[]).forEach(v=>{
+    const key = (v.word||'').trim().toLowerCase();
+    if(!key) return;
+    if(!State.vocabBank[key]){
+      State.vocabBank[key] = {
+        word: v.word, zh: v.zh, example: v.example, stress_zh: v.stress_zh,
+        status:'new', reviewCount:0, firstSeen: dateKey
+      };
+    }
+  });
+  saveVocabBank();
+}
+function shuffleArr(arr){ return arr.map(v=>[Math.random(),v]).sort((a,b)=>a[0]-b[0]).map(v=>v[1]); }
+
+function startReview(){
+  const words = Object.values(State.vocabBank);
+  if(!words.length){ alert('还没攒够词呢，先学几天再来复习～'); return; }
+  const learning = words.filter(w=>w.status!=='known');
+  const known = words.filter(w=>w.status==='known');
+  State.reviewQueue = [...shuffleArr(learning), ...shuffleArr(known)];
+  State.reviewIndex = 0;
+  State.reviewFlipped = false;
+  State.view = 'review';
+  render();
+}
+function flipCard(){ State.reviewFlipped = !State.reviewFlipped; render(); }
+function markWord(status){
+  const cur = State.reviewQueue[State.reviewIndex];
+  const key = (cur.word||'').trim().toLowerCase();
+  if(State.vocabBank[key]){ State.vocabBank[key].status = status; State.vocabBank[key].reviewCount++; }
+  saveVocabBank();
+  State.reviewIndex++;
+  State.reviewFlipped = false;
+  render();
+}
+
 /* ---------------- 每日内容：缓存优先 + 后台更新 ---------------- */
 async function ensureStartDate(){
   const today = todayKey();
@@ -325,6 +374,7 @@ function applyNewDay(dateKey, data, source){
   State.dayData = data;
   State.dayKey = dateKey;
   State.daySource = source || 'fallback';
+  mergeVocabIntoBank(data.vocab, dateKey);
   try{
     localStorage.setItem('myenglish-day-' + dateKey, JSON.stringify(data));
     localStorage.setItem('myenglish-day-source-' + dateKey, source);
@@ -346,6 +396,7 @@ async function ensureDailyContent(){
   if(cached){
     State.dayData = cached; State.dayKey = dateKey; State.daySource = cachedSource || 'fallback';
     await ensureStartDate();
+    mergeVocabIntoBank(cached.vocab, dateKey);
     render();
     if(cachedSource === 'fallback' || !cachedSource){ setTimeout(()=>refreshInBackground(dateKey), 1500); }
     return;
@@ -353,6 +404,7 @@ async function ensureDailyContent(){
 
   State.dayData = FALLBACK_DAY; State.dayKey = dateKey; State.daySource = 'fallback';
   await ensureStartDate();
+  mergeVocabIntoBank(FALLBACK_DAY.vocab, dateKey);
   render();
   setTimeout(()=>refreshInBackground(dateKey), 500);
 }
@@ -462,6 +514,10 @@ function renderHome(){
       <h2>${d.theme||''}</h2>
     </div>
 
+    <div class="continue-row" style="margin-top:16px;">
+      <button class="btn-primary" style="background:var(--gold);" onclick="startReview()">🔁 复习词库（共 ${Object.keys(State.vocabBank).length} 词）</button>
+    </div>
+
     <div class="section-title">📚 今日新词</div>
     ${vocabHtml}
 
@@ -546,14 +602,63 @@ function renderDialogue(){
 function advance(){ State.revealed++; render(); }
 function chooseOption(i){ State.chosen[State.revealed]=i; State.revealed++; render(); }
 
+function renderReview(){
+  const total = State.reviewQueue.length;
+  if(State.reviewIndex >= total){
+    const knownCount = State.reviewQueue.filter(w=>{
+      const k=(w.word||'').trim().toLowerCase();
+      return State.vocabBank[k] && State.vocabBank[k].status==='known';
+    }).length;
+    return `
+      <div class="scene-header" style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+        <button class="back-btn" onclick="goHome()" style="background:none; border:1.5px solid var(--line); border-radius:99px; width:40px; height:40px; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center;">←</button>
+        <div><h2 style="font-size:18px;">复习完成</h2></div>
+      </div>
+      <div class="complete-card">
+        <h3>这一轮复习完成了！🎉</h3>
+        <div style="font-size:13px;color:var(--ink-soft)">这次复习了 ${total} 个词，其中 ${knownCount} 个标记为"已记住"</div>
+        <div class="continue-row"><button class="btn-primary" onclick="goHome()">返回首页</button></div>
+      </div>`;
+  }
+
+  const w = State.reviewQueue[State.reviewIndex];
+  return `
+    <div class="scene-header" style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+      <button class="back-btn" onclick="goHome()" style="background:none; border:1.5px solid var(--line); border-radius:99px; width:40px; height:40px; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center;">←</button>
+      <div><h2 style="font-size:18px;">复习中</h2><div class="mono" style="font-size:12px;color:var(--ink-soft);">第 ${State.reviewIndex+1} / ${total} 个</div></div>
+    </div>
+    <div class="vocab-card" style="min-height:180px; display:flex; flex-direction:column; justify-content:center; cursor:pointer;" onclick="flipCard()">
+      <div class="vocab-top">
+        <div class="vocab-word" style="font-size:24px;">${w.word}</div>
+        <button class="speak-btn" onclick="event.stopPropagation(); speak(this,'${escJs(w.word)}','en-US')">🔊</button>
+      </div>
+      ${!State.reviewFlipped ? `
+        <div style="margin-top:14px; font-size:13px; color:var(--ink-soft);">点卡片翻面看意思 👆</div>
+      ` : `
+        <div class="vocab-zh" style="font-size:16px; margin-top:10px;">${w.zh||''}</div>
+        <div class="vocab-example" style="margin-top:8px;">${w.example||''}</div>
+      `}
+    </div>
+    ${State.reviewFlipped ? `
+      <div class="choices">
+        <button class="choice-btn" style="border-color:var(--berry);" onclick="markWord('learning')"><span class="txt">😅 还没记住</span></button>
+        <button class="choice-btn" style="border-color:var(--aurora);" onclick="markWord('known')"><span class="txt">✅ 已经记住</span></button>
+      </div>
+    ` : ''}
+  `;
+}
+
 function render(){
-  document.getElementById('app').innerHTML = State.view === 'home' ? renderHome() : renderDialogue();
+  if(State.view === 'home') document.getElementById('app').innerHTML = renderHome();
+  else if(State.view === 'review') document.getElementById('app').innerHTML = renderReview();
+  else document.getElementById('app').innerHTML = renderDialogue();
 }
 
 /* ---------------- 启动 ---------------- */
 async function init(){
   const saved = loadProgress();
   if(saved){ State.readDone = saved.readDone || {}; State.completedDates = saved.completedDates || []; }
+  State.vocabBank = loadVocabBank();
   loadVoices();
   await ensureDailyContent();
   if('serviceWorker' in navigator){
