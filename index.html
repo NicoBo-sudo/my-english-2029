@@ -450,7 +450,11 @@ function renderHome(){
 
   let toastHtml = State._refreshing ? '<div class="toast-update">🔄 正在后台更新今天的内容…</div>' : '';
   if(State.daySource === 'fallback' && !State._refreshing && State.dayData){
-    toastHtml = `<div class="toast-update" style="color:var(--berry);">📡 今天暂时用的是备用内容<span style="text-decoration:underline;cursor:pointer;margin-left:6px;" onclick="forceRefreshNow()">点此重试</span></div>`;
+    toastHtml = `<div class="toast-update" style="color:var(--berry);">
+      📡 今天暂时用的是备用内容
+      <span style="text-decoration:underline;cursor:pointer;margin-left:6px;" onclick="forceRefreshNow()">点此重试</span>
+      ${State.lastGenError ? `<div class="mono" style="margin-top:6px; font-size:11px; color:var(--berry); word-break:break-all; white-space:pre-wrap; text-align:left; max-width:100%;">${State.lastGenError}</div>` : ''}
+    </div>`;
   }
 
   const vocabHtml = (d.vocab||[]).map(v => `
