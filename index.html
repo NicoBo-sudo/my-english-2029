@@ -356,7 +356,7 @@ async function generateDayViaAI(dateKey){
     const resp = await fetchWithTimeout(WORKER_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ app:'mom', dateKey, dayNumber: State.dayNumber, phase: getPhaseLabel() })
-    }, 8000);
+    }, 30000);
     const raw = await resp.text();
     if(!resp.ok){ State.lastGenError = `Worker错误(${resp.status})：${raw.slice(0,300)}`; return null; }
     const clean = raw.replace(/```json|```/g,'').trim();
